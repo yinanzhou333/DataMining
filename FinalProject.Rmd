@@ -1,0 +1,332 @@
+---
+title: "ALY6040 Final Project"
+author: "Yinan Zhou"
+date: "October 20, 2024"
+output: 
+  pdf_document: default
+---
+
+
+# 1. Introduction
+
+The diamond dataset \href{https://www.kaggle.com/datasets/shivam2503/diamonds}{\textcolor{blue}{diamonds.csv}} contains the 10 attributes of 53940 diamonds. We assume the data owners are diamond merchants or customers, who are eager to discover practical strategies of evaluating the diamond prices. Therefore, we select `price` as the response variable, and use the remaining 9 varaibles: `carat`, `cut`, `color`, `clarity`, `x`, `y`, `z`, `depth` and `table` as the features. The definition of each variable is available in \href{#appendix-a}{\textcolor{blue}{Appendix A}}.
+
+This report is divided into four key sections: (1) Exploratory Data Analysis (EDA), (2) Feature Engineering and Selection, (3) Classification Models, and (4) Regression Models. Each section explains the methodologies used, analyzes the results, interprets the findings. Finally, we offer recommendations for enhancing diamond price prediction and summarize our data mining efforts with this dataset.
+
+
+# 2. Exploratory Data Analysis
+
+## 2.1 Clean Dataset
+
+We load the data using function `read.csv`, and store it in the variable `raw_data`. The raw data has 53940 rows and 11 columns. However, the first column 'X' is the useless index. We removed it. Therefore, the dataset has 53940 entries and 10 variables. Due to space constraints, details are printed in \href{#appendix-b1}{\textcolor{blue}{Appendix B1}}.
+
+```{r}
+raw_data <- read.csv("diamonds.csv") # Reading the data set as a dataframe
+diamonds <- raw_data[-1] # Remove the column of entry indices
+dim(diamonds) # Print dimensions of the dataset
+```
+
+Fortunately, this dataset do not have any missing value. However, we catch 146 duplicated rows (not include their first appearance). These duplicated entry pairs have exactly the same price and all other attributes. After removing all duplications, 53794 entries remains in the dataset.
+
+```{r}
+diamonds_clean <- diamonds[!duplicated(diamonds),]# Remove duplicated rows
+```
+
+The outliers of numerical variables are visualized using boxplots, shown in \href{#appendix-b2}{\textcolor{blue}{Appendix B2}}. The outliers are represented by dots in the box plots. There are many outliers in every numerical variable.
+
+Some outliers are suspicious. For example, the entries with x = 0 or y = 0 or z = 0. Any one of these variables equals 0 should be wrong. There are two situations: (1) x = 0, y = 0 and z = 0; and (2) x > 0, y > 0 and z = 0. For the first situation, we directly remove the corresponding entries because they are unable to be calculated. For the second situation, we calculate the z value using the known formula: depth = 200*z/(x+y). After our processing, only 7 suspicious outliers need be removed. Now there are 53787 entries in the dataset.
+
+```{r}
+# Collect all suspicious outliers with x = 0 or y = 0 or z = 0
+suspicious_outliers <- diamonds_clean[(diamonds_clean$x == 0) 
+              | (diamonds_clean$y == 0) | (diamonds_clean$z == 0),]
+# Fix the suspicious outliers that can be fixed
+outliers_can_fix <- which(diamonds_clean$x > 0 
+                          & diamonds_clean$y > 0 & diamonds_clean$z == 0)
+diamonds_clean$z[outliers_can_fix] <- diamonds_clean$depth[outliers_can_fix] * 
+  (diamonds_clean$x[outliers_can_fix] + diamonds_clean$y[outliers_can_fix])/200
+# Remove the 7 remaining suspicious outliers with x=0, y=0 and z=0
+diamonds_clean <- diamonds_clean[!(diamonds_clean$x == 0 | 
+                  diamonds_clean$y == 0 | diamonds_clean$z == 0), ]
+
+```
+
+Until now, we have already cleaned the data by (1) removing the useless columns of the row index; (2) removing 146 repeated rows; (3) fixing 12 rows with z = 0, x, y > 0; (4) removing 7 rows with z = 0, x = 0 and y = 0, which are the suspicious outliers that is unable to fix.
+
+Lastly, we verify that each entry conforms to the predefined equation: 100*depth = z/mean(x,y). Due to the `x`, `y`, and `z` values being recorded with only two decimal places, we allow a tolerance of 3% to account for rounding differences when verifying the accuracy of the calculated depth against the recorded depth. A total of 49 entries show a mismatch between the calculated and recorded depths. These entries are removed to ensure the reliability of the dataset. Observing the boxplots again in \href{#appendix-b2}{\textcolor{blue}{Appendix B2}}, we decide that larger outliers in `y` and `z` should also be removed. The final cleaned dataset contains 53738 rows and 10 columns.
+
+```{r}
+# Verify the equation of calculating depth
+diamonds_clean$calculated_depth <- with(diamonds_clean, round(100*z / ((x + y) / 2),1))
+diamonds_clean$depth_error <- with(diamonds_clean, 
+                                   round(abs(depth - calculated_depth) /depth,2))
+# Clean the dataset: remove entries with more than 3% depth error or larger outliers
+diamonds_cleaned <- diamonds_clean[(diamonds_clean$depth_error <= 0.03) 
+                                   & (diamonds_clean$y<30 | diamonds_clean$z <30), ]
+diamonds_cleaned$calculated_depth <- NULL; diamonds_cleaned$depth_error <- NULL
+dim(diamonds_cleaned)
+```
+
+## 2.2 Data Distribution
+We visualize the 7 continuous numerical variables by the histograms and visualize the 3 categorical variables by the bar plots, as shown in \href{#appendix-b3}{\textcolor{blue}{Appendix B3}}. The variables `depth` and `table` are normally distributed. The distributions of `carat`, `price`, `x`, `y`, and `z` are right-skewed, meaning most diamonds have lower carat, lower price and smaller dimensions. The distribution of `cut` is fairly uneven, with a large proportion of diamonds rated as "Very Good," followed by "Premium" and "Ideal." There are fewer "Fair" and "Good" diamonds. The color distribution is relatively balanced, with most diamonds having a color grade between D and G. Grades H to J appear less frequently. Most diamonds fall into the SI1 and VS2 clarity categories, indicating slight inclusions or very slight inclusions. The I1 and IF categories are much less common.
+
+## 2.3 Variable Correlation
+For the 7 numerical variables, we use `ggpairs()` to visualizes the correlation matrix, as shown in \href{#appendix-b4}{\textcolor{blue}{Appendix B4}}. To reduce the file size of the pdf file, we sampled 1000 observations from the original 53738. This visualization helps in identifying potential relationships and patterns that could inform further analysis or modeling efforts related to diamond pricing. 
+
+Analysis based on the correlation visualization: (1) Carat, dimensions (x, y, z), and price are strongly related to each other and (2) Depth and table do not significantly affect the price of diamonds, and depth shows a weak inverse relationship with carat size.
+
+
+# 3. Feature Engineering and Selection
+
+## 3.1 Create new variables: average_size and price_per_carat
+
+The scatter plots show positive relationships between price and the size-related variables (carat, x, y, z). These relationships are mostly linear with some dispersion. Such dispersion and how is it related to other variables could be of the data owner's interest. The strong linear relationships between x, y, and z indicate that these dimensions are highly proportional to each other. Therefore, we use a new variable `average_size` = (x+y+z)/3 to replace the original sizes in three directions. 
+
+```{r}
+# Create the new variable 'average_size'
+diamonds <- diamonds_cleaned
+diamonds$average_size <- with(diamonds, (x + y + z) / 3)
+```
+
+Another new variable `price_per_carat` = price/carat could better reveal how does the other characteristics like cut, color, clarity affect the price in the following data mining procedure.
+
+```{r, message=FALSE}
+library(ggplot2)
+library(GGally) # Load library
+# Create the new variable 'price_per_carat'
+diamonds$price_per_carat <- with(diamonds, price/carat)
+# Select the right-skewed and related variables
+vars_new <- diamonds[, c("price_per_carat", "carat", "average_size", "depth", "table")]
+# Visualize pairwise relationships between the selected variables
+ggpairs(vars_new[sample(53738, 1000), ])
+```
+
+Analysis of the new pairwise plots:
+
+(1) carat and average_size still have a very strong positive correlation of 0.979, which makes sense because carat is highly related to the overall dimensions of the diamond, captured by average_size.
+
+(2) price_per_carat still has a strong positive correlation with both carat (0.770) and average_size (0.792). This means that as either carat or average_size increases, price_per_carat tends to increase as well.
+
+(3) depth and table still do not significantly affect the price_per_carat.
+
+
+## 3.2 Create a new categorical response variable
+
+Training a model to predict the exact price of diamonds could be challenging. Weplan to get a classification model at this stage: predict the price per carat is higher than the median value or not. A new binary response variable `expensive` is created by comparing the price_per_carat with its median. This can also guarantee the dataset is balanced.
+
+The following code calculates the median value of the price_per_carat variable from the diamonds_cleaned dataset and creates a new binary variable named expensive, which assigns a value of 1 to diamonds with a price_per_carat greater than the median and 0 otherwise. It then constructs a new dataset called diamonds, which retains only the relevant columns, including the newly created expensive variable, along with other features such as carat, depth, table, cut, color, clarity, and average_size, along with price_per_carat.
+
+```{r}
+# Calculate the median of price_per_carat
+median_p <- median(diamonds$price_per_carat)
+# Create a binary variable (1 if price_per_carat > median, 0 otherwise)
+diamonds$expensive <- ifelse(diamonds$price_per_carat > median_p, 1, 0)
+```
+
+
+
+# 4. Classification Models
+
+## 4.1 Split Data 
+
+Weprepare the diamonds dataset for analysis by converting the categorical variables cut, color, and clarity into factors, which is essential for accurate modeling and statistical analysis in R. Then Wesplit the dataset into training and testing sets, allocating 60% of the data for training and 40% for testing, ensuring that the results can be validated on a separate subset. The random seed is set to 12345 to ensure reproducibility of the random sampling process, allowing for consistent results across different runs of the code. The resulting train_data contains the sampled observations for model training, while test_data consists of the remaining observations for evaluating model performance.
+
+```{r}
+# Convert categorical variables to factors
+diamonds$cut <- as.factor(diamonds$cut)
+diamonds$color <- as.factor(diamonds$color)
+diamonds$clarity <- as.factor(diamonds$clarity)
+# Split the data into training (60%) and testing (40%) sets
+set.seed(12345)
+train_index <- sample(seq_len(nrow(diamonds)), size = 0.6 * nrow(diamonds))
+train_data <- diamonds[train_index, ]; test_data <- diamonds[-train_index, ]
+```
+
+## 4.2 Logistic Regression
+
+The model is created using the glm() function with predictor variables such as carat, depth, table, cut, color, clarity, and average_size, and response varaiable expensive. After building the model, a summary is displayed to show the coefficients and statistical significance of each variable. By setting type = "response", the model then predicts the probabilities of diamonds being classified as expensive in the test dataset (test_data). These probabilities are converted into binary predictions (0 or 1) using a threshold of 0.5. A confusion matrix is generated to compare the predicted values with the actual expensive labels in the test data. Finally, the accuracy of the model is calculated by comparing the predictions to the actual values, and the result is printed.
+
+```{r}
+# Build a logistic regression model
+model_logit <- glm(expensive ~ carat + depth + table + cut + color
+ + clarity + average_size, family = binomial, data = train_data)
+# Summary of the logistic model
+summary(model_logit)
+# Predict on the test data
+pred_logit <- predict(model_logit, newdata = test_data, type = "response")
+# Convert probabilities to binary predictions (0 or 1)
+pred_logit_class <- ifelse(pred_logit > 0.5, 1, 0)
+# Confusion matrix for logistic regression
+table(Predicted = pred_logit_class, Actual = test_data$expensive)
+# Accuracy of the logistic model
+accuracy_logit <- mean(pred_logit_class == test_data$expensive)
+print(paste("Logistic Regression Accuracy:", accuracy_logit))
+```
+
+Interpretation:
+
+The logistic regression model provides a good fit for predicting whether the price per carat is higher than the median. Most variables are statistically significant and contribute meaningfully to the prediction. Weplan to use logistic regression as the baseline to evaluate other models.
+
+A p-value lower than 0.05 indicates that the variable is statistically significant. Most of the variables are highly significant (p-values<2e-16), meaning they strongly impact the classification of diamond prices. The coefficient of `table` is 0.03, indicating a slight increase in the odds of higher price per carat with an increase in table. The coefficient of `depth`is 0.18, which is also 10x smaller than other coefficient magnitudes. Therefore, Wethink `table` and `depth` are the two less important variables when predicting the diamond is expensive or not.
+
+## 4.3 Support Vector Machine
+
+For this dataset, LDA gives worse accurancy than the logistic regression. The reason could be some of the LDA assumptions are not true in this dataset. Unlike LDA, SVM makes no assumptions about the distribution of the data. 
+
+Grid searching method is used to find a relative good SVM configurations. Among the selctions of cost (0.1,1,10) and gamma (0.1,1,10), cost = 10 and gamma = 0.1 can give us the best accuracy 0.95.
+
+In the SVM model, 'C-classification' type and 'radial' kernal are specified. The features are scaled because they are of very different magnitudes. The hyperparameters are set with a cost of 10 and a gamma of 0.1. The accuracy of the SVM model is calculated and printed by comparing the predictions to the actual labels in the test data. The accuracy Weget from the initial SVM is 95%, which is slightly better than the logistic regression 94%.
+
+```{r}
+library(e1071)
+# Build a SVM model for classification model
+model_svm <-svm(expensive ~ carat + depth + table + cut + color + clarity + average_size, 
+data=train_data, type='C-classification', kernel='radial', cost=10, gamma=0.1, scale=TRUE)
+testPred <- predict(model_svm, test_data, type="response") # Predict on the test data
+# Confusion matrix for logistic regression
+table(Predicted = testPred, Actual = test_data$expensive)
+accuracy_svm <- mean(testPred == test_data$expensive) # Accuracy
+print(paste("SVM Classification Accuracy:", accuracy_svm))
+```
+
+# 5. Regression Models
+
+We continue training a Support Vector Machine (SVM) regression model using a sampled dataset of 10000 observations from the train_data. The response variable is `price_per_carat`. Comparing to the original variable `price`, this is more accurate. The predicted price can be easily calculated by multiplying `price_per_carat` and `carat`. After training, the model predicts on the test_data, and residuals (the difference between the predicted and actual prices) are calculated. The Mean Squared Error (MSE) is computed to evaluate the model's accuracy. Additionally, a scatter plot compares actual vs. predicted prices, with a red reference line representing perfect predictions. This visualization helps to assess how well the model's predictions align with the actual values.
+
+```{r}
+set.seed(123)
+sample_indices <- sample(1:nrow(train_data), 10000)
+train_sample <- train_data[sample_indices, ]
+# Build a SVM model for regression model
+model_svm <-svm(price_per_carat ~ carat + depth + table 
++ cut + color + clarity + average_size, data=train_sample, 
+type='eps-regression', kernel='radial', cost=10, gamma=0.1, scale=TRUE)
+testPred <- predict(model_svm, test_data, type="response") # Predict on the test data
+# Calculate the residuals (difference between predicted and actual prices)
+residuals <- testPred*test_data$carat - test_data$price
+# Mean Squared Error (MSE)
+cat("Mean Squared Error:", mean(residuals^2), "\n")
+
+# Plot the actual vs predicted values
+plot(test_data$price, testPred*test_data$carat, 
+     xlab = "Actual price", 
+     ylab = "Predicted price", 
+     col = "blue", pch = 12)
+
+# Add a reference line for perfect prediction (y = x)
+abline(0, 1, col = "red")
+```
+
+The plot and MSE value of 404796.3 indicate the performance of the SVM regression model in predicting the price of diamonds. The scatter plot compares the actual prices on the x-axis and the predicted prices on the y-axis, with each blue point representing a prediction for a diamond. The red line (y = x) represents perfect predictions where predicted prices exactly match the actual prices.
+
+The clustering of points around the red line shows that the model performs reasonably well for many predictions. However, there are some points that deviate from the line, particularly at higher price levels, indicating some errors in those predictions.
+
+The Mean Squared Error (MSE) value of 404796 measures the average squared difference between the predicted and actual prices. While this value is large, it corresponds to the high range of diamond prices (up to 20,000 in the dataset), meaning the error is relative to the price scale. The model is fairly accurate for lower and mid-range prices but shows more variability or error at the higher price range.
+
+
+# 6. Interpretations
+
+
+From the EDA, we gained insights into the distribution and relationships between variables. The correlation visualization in \href{#appendix-b4}{\textcolor{blue}{Appendix B4}} informed our feature selection process. For instance, the high covariance values (0.99) between variables `x`, `y`, and `z` suggest a degree of redundancy among them. Additionally, the strong correlation between `price` and `carat` may hinder the discovery of relationships between `price` and other features.
+
+The next step involved feature engineering and selection. We created new variables, such as `average_size` and `price_per_carat`, and derived a categorical response variable `expensive`, based on `price_per_carat`. In the updated pairwise plots, the covariance between `price_per_carat` and `carat` decreased to 0.79, compared to the original 0.93 covariance between `price` and `carat`. This reduction is encouraging, as it may allow us to better uncover the contributions of other features to the price. Furthermore, the `expensive` variable is well-balanced, with an equal distribution of TRUE and FALSE values.
+
+Using the categorical response `expensive`, we applied classification models to predict whether a diamond is expensive. Logistic regression achieved 94% accuracy, while SVM reached 95% accuracy. Grid search was used to optimize the hyperparameters for the SVM model. The logistic regression model revealed that `table` and `depth` were less important in predicting whether a diamond is expensive, as indicated by their higher p-values (0.03 and 0.18, respectively). The SVM model, with its higher accuracy, suggests that this approach might be promising for price prediction as well.
+
+When we turned to the numerical response `price_per_carat`, we trained regression models using SVM to predict unit price. The clustering of points around the perfect prediction line indicates that the model performs well for many cases. However, there are some deviations, particularly for higher-priced diamonds, where prediction becomes more challenging. We also attempted to use `price` as the response variable in an SVM regression model, but this resulted in a higher mean squared error (MSE). This observation supports our choice of `price_per_carat` as a more effective target for the diamond price prediction task.
+
+
+# 7. Recommendations & Conclusions
+
+For the data owner, the findings from the analysis provide valuable insights into predicting diamond prices based on the available features. The classification model achieves a high accuracy of at least 95% in determining whether a diamond is classified as expensive, while the SVM regression model performs well for lower and mid-range prices but shows more variability at higher price levels. We recommend focusing future research on improving price prediction for expensive diamonds, as this segment shows the largest prediction error. Techniques such as Principal Component Analysis (PCA) could be explored to reduce dimensionality and improve model accuracy.
+
+Our analysis reveals that key features—`carat`, `average_size`, `cut`, `color`, and `clarity`—significantly influence diamond pricing, while `depth` and `table` are less important. We recommend the data owner prioritize the impactful features when developing pricing strategies. The less critical features may be deprioritized, allowing for a more focused analysis on the features that matter most for accurate price prediction.
+
+Additionally, we suggest refining the definition of diamond size. The current measurements using x, y, and z dimensions may be inconsistent due to rotational variability, potentially affecting pricing accuracy. A more standardized size metric that considers diamond volume or surface area, along with weight (carat), may offer better representation. Incorporating factors such as shape and cut quality into the size definition could also enhance the model's ability to predict prices accurately.
+
+In conclusion, our analysis identifies the core factors that influence diamond prices and provides a predictive model for the data owner. Addressing the higher variability in predicting expensive diamond prices through advanced methods will further improve accuracy and benefit the data owner's pricing strategy.
+
+Our answer to the assignment questions:
+
+### 1. **What tools and techniques were used and why?**
+   In our analysis, we used R for data processing, visualization, and model building due to its rich libraries. EDA was performed to understand the distribution and relationships between variables, using techniques like correlation matrices and pairwise plots to identify patterns and redundancies. For instance, the strong covariance between `x`, `y`, and `z` indicated potential multicollinearity, while high correlation between `price` and `carat` guided us to focus on alternative variables. Feature engineering involved creating new variables such as `average_size` and `price_per_carat` to reduce multicollinearity and better capture the underlying relationships in the data. Classification and regression techniques were then applied, including logistic regression and Support Vector Machines (SVM), selected for their performance and interpretability in binary classification and continuous prediction tasks.
+
+### 2. **What were the results of the techniques? What were the new insights?**
+   The EDA revealed key insights about the relationships between variables, such as the redundancy among dimensions `x`, `y`, and `z` and the dominance of `carat` in relation to `price`. By engineering features like `price_per_carat`, we reduced the covariance between `carat` and the new target variable to 0.79, compared to 0.93 with `price`, which allowed us to explore other features' contributions to diamond pricing. In terms of classification, both logistic regression and SVM models performed well, achieving 94% and 95% accuracy, respectively. The SVM model’s superior accuracy suggests its potential for improving price predictions. The SVM regression models also performed reasonably well, particularly when predicting `price_per_carat`, though higher-priced diamonds proved more difficult to predict accurately.
+
+### 3. **How did this help answer your questions? If your questions changed, why?**
+   Our initial question was how to improve the prediction of diamond prices, and the analysis helped clarify that focusing on `price_per_carat` rather than `price` yielded better insights and predictions. The discovery that `price_per_carat` had less covariance with other features enabled us to better model relationships within the dataset, particularly through feature engineering. Additionally, the well-balanced `expensive` categorical variable allowed us to apply classification models effectively. The success of SVM and logistic regression models in classification, combined with the observed regression performance, confirmed that feature engineering improved our predictive power. As a result, our approach shifted towards optimizing the performance of models on `price_per_carat`, rather than continuing to work with `price` directly.
+
+
+# Appendix A: Dataset Information {#appendix-a}
+Definition of all variables in the dataset (ranges are listed in the parenthesis):
+
+* price: price in US dollars (\$326--\$18,823)
+* carat: weight of the diamond (0.2--5.01)
+* cut: quality of the cut (Fair, Good, Very Good, Premium, Ideal)
+* color: diamond color, from J (worst) to D (best)
+* clarity: a measurement of how clear the diamond is (I1 (worst), SI2, SI1, VS2, VS1, VVS2, VVS1, IF (best))
+* x: length in mm (0--10.74)
+* y: width in mm (0--58.9)
+* z: depth in mm (0--31.8)
+* depth: total depth percentage = z / mean(x, y) = 2 * z / (x + y) (43--79)
+* table: width of top of diamond relative to widest point (43--95)
+
+
+# Appendix B : Code Results Occupying Space {#appendix-b}
+
+
+## B1. Subsection 2.1: Variable types and statistics {#appendix-b1}
+```{r}
+# Print variable types and statistics
+summary(diamonds)
+str(diamonds)
+```
+
+## B2. Subsection 2.1: Boxplots of 7 numerical variables to find outliers {#appendix-b2}
+```{r}
+numeric_data <- diamonds_clean[,sapply(diamonds_clean,is.numeric)]
+par(mfrow = c(2, 4), mar = c(4, 4, 2, 1), oma = c(1, 1, 1, 1))
+for (i in 1:7){boxplot(numeric_data[, i], 
+                       xlab=colnames(numeric_data)[i],horizontal = TRUE)}
+```
+
+## B3.  Subsection 2.2: Histograms and bar plots {#appendix-b3}
+
+```{r, message=FALSE}
+# Load necessary libraries
+library(ggplot2)
+library(gridExtra)
+# Separate numeric and categorical variables
+numeric_vars <- names(diamonds_cleaned)[sapply(diamonds_cleaned, is.numeric)]
+categorical_vars <- names(diamonds_cleaned)[sapply(diamonds_cleaned, is.factor) 
+                    | sapply(diamonds_cleaned, is.character)]
+# Create an empty list to store plots
+plot_list <- list()
+# Visualize numerical variables using histograms
+for (var in numeric_vars) {
+  p <- ggplot(diamonds_cleaned, aes(x = .data[[var]])) +
+    geom_histogram(fill = "blue", color = "black") +
+    ggtitle(paste("Histogram of", var)) +
+    theme_minimal() + xlab(var) + ylab("Frequency")
+  plot_list[[length(plot_list) + 1]] <- p
+}
+# Visualize categorical variables using bar plots
+for (var in categorical_vars) {
+  p <- ggplot(diamonds_cleaned, aes(x = .data[[var]])) +
+    geom_bar(fill = "blue", color = "black") +
+    ggtitle(paste("Barplot of", var)) +
+    theme_minimal() + xlab(var) + ylab("Count")
+  plot_list[[length(plot_list) + 1]] <- p
+}
+# Arrange the plots in a 2 by 5 grid
+grid.arrange(grobs = plot_list, ncol = 3, nrow = 4)
+```
+## B4.  Subsection 2.3: Correlation matrix {#appendix-b4}
+
+```{r, message=FALSE}
+# Select the right-skewed and related variables
+selected_vars <- diamonds_cleaned[, c("price", "carat", "x", "y", "z", "depth", "table")]
+# Visualize pairwise relationships between the selected variables
+ggpairs(selected_vars[sample(53738, 1000), ])
+```
