@@ -1,7 +1,7 @@
 ---
 title: "ALY6040 Final Project"
 author: "Yinan Zhou"
-date: "October 20, 2024"
+date: "October 26, 2024"
 output: 
   pdf_document: default
 ---
@@ -124,7 +124,6 @@ diamonds$expensive <- ifelse(diamonds$price_per_carat > median_p, 1, 0)
 ```
 
 
-
 # 4. Classification Models
 
 ## 4.1 Split Data 
@@ -177,7 +176,7 @@ Grid searching method is used to find a relative good SVM configurations. Among 
 
 In the SVM model, 'C-classification' type and 'radial' kernal are specified. The features are scaled because they are of very different magnitudes. The hyperparameters are set with a cost of 10 and a gamma of 0.1. The accuracy of the SVM model is calculated and printed by comparing the predictions to the actual labels in the test data. The accuracy Weget from the initial SVM is 95%, which is slightly better than the logistic regression 94%.
 
-```{r}
+```{r, message=FALSE}
 library(e1071)
 # Build a SVM model for classification model
 model_svm <-svm(expensive ~ carat + depth + table + cut + color + clarity + average_size, 
@@ -189,9 +188,130 @@ accuracy_svm <- mean(testPred == test_data$expensive) # Accuracy
 print(paste("SVM Classification Accuracy:", accuracy_svm))
 ```
 
-# 5. Regression Models
+## 4.4 Decision Tree
 
-We continue training a Support Vector Machine (SVM) regression model using a sampled dataset of 10000 observations from the train_data. The response variable is `price_per_carat`. Comparing to the original variable `price`, this is more accurate. The predicted price can be easily calculated by multiplying `price_per_carat` and `carat`. After training, the model predicts on the test_data, and residuals (the difference between the predicted and actual prices) are calculated. The Mean Squared Error (MSE) is computed to evaluate the model's accuracy. Additionally, a scatter plot compares actual vs. predicted prices, with a red reference line representing perfect predictions. This visualization helps to assess how well the model's predictions align with the actual values.
+This code trains a decision tree model to classify diamonds as "expensive" or not, using the variables `carat`, `depth`, `table`, `cut`, `color`, `clarity`, and `average_size` as predictors. The model is built on the `train_data` dataset using the `rpart` function with the `method="class"` option, which specifies a classification tree. The code then predicts the classifications for the `test_data` and calculates a confusion matrix (`conf_matrix_tree`) to compare the predicted labels to the actual labels in the test set. Finally, the accuracy of the model is computed by taking the mean of correct predictions and printed as the "Decision Tree Classification Accuracy."
+
+```{r, message=FALSE}
+library(rpart)
+# Decision Tree Model
+model_tree <- rpart(expensive ~ carat + depth + table + cut + color + clarity + average_size, 
+                    data=train_data, method="class")
+# Predict on test data
+testPred_tree <- predict(model_tree, test_data, type="class")
+# Confusion Matrix for Decision Tree
+conf_matrix_tree <- table(Predicted = testPred_tree, Actual = test_data$expensive)
+print(conf_matrix_tree)
+accuracy_tree <- mean(testPred_tree == test_data$expensive)
+print(paste("Decision Tree Classification Accuracy:", accuracy_tree))
+```
+## 4.5 Random Forest
+
+To improve the accuracy of the decision tree model, we train a random forest model containing 100 trees. `randomForest` is used. importance=TRUE parameter allows for evaluating the significance of each predictor, helping to identify which features most influence the classification.
+
+```{r, message=FALSE}
+library(randomForest)
+set.seed(123) # Set seed for reproducibility
+train_data$expensive <- as.factor(train_data$expensive)
+test_data$expensive <- as.factor(test_data$expensive)
+model_randomForest <- randomForest(expensive ~ carat + depth + table + cut + color
++ clarity + average_size, data=train_data, ntree=100, mtry=3, importance=TRUE)
+testPred_rf <- predict(model_randomForest, test_data) # Predict on test data
+accuracy_rf <- mean(testPred_rf == test_data$expensive) # Calculate Accuracy
+print(paste("Random Forest Classification Accuracy:", accuracy_rf))
+
+```
+
+# 5. Interpretations
+
+From the EDA, we gained insights into the distribution and relationships between variables. The correlation visualization in \href{#appendix-b4}{\textcolor{blue}{Appendix B4}} informed our feature selection process. For instance, the high covariance values (0.99) between variables `x`, `y`, and `z` suggest a degree of redundancy among them. Additionally, the strong correlation between `price` and `carat` may hinder the discovery of relationships between `price` and other features.
+
+The next step involved feature engineering and selection. We created new variables, such as `average_size` and `price_per_carat`, and derived a categorical response variable `expensive`, based on `price_per_carat`. In the updated pairwise plots, the covariance between `price_per_carat` and `carat` decreased to 0.79, compared to the original 0.93 covariance between `price` and `carat`. This reduction is encouraging, as it may allow us to better uncover the contributions of other features to the price. Furthermore, the `expensive` variable is well-balanced, with an equal distribution of TRUE and FALSE values.
+
+Using the categorical response `expensive`, we applied classification models to predict whether a diamond is expensive. Logistic regression achieved 94% accuracy, while SVM reached 95% accuracy. Grid search was used to optimize the hyperparameters for the SVM model. The logistic regression model revealed that `table` and `depth` were less important in predicting whether a diamond is expensive, as indicated by their higher p-values (0.03 and 0.18, respectively). The SVM model, with its higher accuracy, suggests that this approach might be promising for price prediction as well. Decision tree achieved 90% accuracy, while random forest reached 95% accuracy. Random forest is the most effective model for this classification task. We can also interpret the feature importance from the random forest.
+
+
+## 5.1 Models Comparison
+
+Best Overall Model: The random forest has the highest accuracy (95.48%), suggesting it is the most effective model for this classification task. It’s robust and captures complex patterns, making it suitable for production use. Random forests reduce the risk of overfitting by averaging across multiple trees, and they capture non-linear relationships better than logistic regression and individual decision trees. They also provide insights into feature importance. However, random forests can be less interpretable than a single decision tree. The ensemble nature of the model also requires more computation, which may impact performance with very large datasets.
+
+Second-Best: The SVM model is close to random forest in accuracy (95.32%) and can be a strong choice if interpretability is less of a concern. SVM is effective in handling high-dimensional data and complex boundaries. With kernel functions, it can capture non-linear relationships well. However, SVMs can be computationally expensive, especially with large datasets, and they are less interpretable than logistic regression.
+
+Decision Tree: accuracy is 90.23%. It is highly interpretable, providing a clear decision-making path and insights into which features are most influential for each classification. However, it is prone to overfitting, which may reduce their performance on test data compared to more robust ensemble methods.
+
+Logistic Regression: accuracy is 94.19%. It is easy to interpret and quick to train. It provides insights into the importance of individual variables through coefficients. However, it is limited in handling non-linear relationships and may underperform if the data contains complex interactions between features.
+
+In summary, the random forest is the best model if accuracy is the priority, while logistic regression or a decision tree might be preferred if interpretability or computational efficiency are more important.
+
+## 5.2 Strategies Suggested By Random Forest
+
+Because decision tree can provide a clear decision-making path. We visualize the first tree in the random forest using `getTree()`.
+
+```{r, message=FALSE}
+# Replace 1 with the index of any tree within the range of `ntree`
+single_tree <- getTree(model_randomForest, k = 1, labelVar = TRUE)
+
+# Convert single_tree to a format suitable for plotting
+library(partykit)
+single_tree_party <- as.party(rpart(expensive ~ carat + depth + table + cut 
+                      + color + clarity + average_size, data = train_data))
+
+plot(single_tree_party) # Plot the single tree
+```
+The decision tree visualization provides a clear, interpretable decision-making path based on the feature average_size and clarity. 
+
+Root Node (Node 1): The first decision point splits the data based on average_size < 4.958.
+
+If average_size is less than 4.958, we move to the left child node (Node 2).
+
+If average_size is greater than or equal to 4.958, we move to the right child node (Node 7).
+
+Left Branch:
+
+Node 2: Here, the data is further split based on average_size < 4.352.
+
+If average_size is less than 4.352, we reach Node 3, which is a terminal node (leaf).
+
+If average_size is greater than or equal to 4.352, we proceed to Node 4.
+
+Node 4: This node splits the data based on clarity, categorizing diamonds into groups (I1, SI1, SI2 vs. VSIF, VVS1, VVS2).
+
+If the diamond clarity is in the first group (I1, SI1, SI2), we reach Node 5 (a terminal node).
+
+If the clarity is in the second group (VSIF, VVS1, VVS2), we reach Node 6 (another terminal node).
+
+Right Branch:
+
+Node 7: This node represents cases where average_size is greater than or equal to 4.958. It is a terminal node, as there are no further splits.
+
+Each terminal node (3, 5, 6, and 7) has a bar chart indicating the proportion of the class predictions at that node. The dark bar represents instances predicted as expensive, while the light bar represents instances predicted as not expensive.
+
+This tree provides an interpretable decision rule that the model uses to classify diamonds based on average_size and clarity. This information can help in formulating a strategy where, for example, diamonds with larger average_size or higher clarity are more likely to be expensive.
+
+To understand the general decision-making pattern across all trees, visualize feature importance, which shows the variables that most influence classification. We use `varImpPlot()` to display the 'Mean Decrease Accuracy' and 'Mean Decrease Gini' plots.
+
+```{r, message=FALSE}
+varImpPlot(model_randomForest) # Plot feature importance
+```
+
+Mean Decrease Accuracy (left plot): This indicates how much accuracy decreases when a given variable is excluded from the model. Higher values mean that the variable is more important for predictive accuracy. If removing a variable leads to a large drop in accuracy, it suggests that this variable plays an important role in distinguishing between the classes (expensive or not).
+
+Mean Decrease Gini (right plot): This measures the total decrease in node impurity (or Gini impurity) that the variable contributes across all trees in the forest. Higher values mean the variable is more effective at splitting data into distinct classes. In other words, it captures the contribution of each variable to creating "pure" nodes where most samples belong to a single class.
+
+Clarity and Average Size: These variables appear to be the most important features, as they have the highest values for both MeanDecreaseAccuracy and MeanDecreaseGini. This suggests that they are key features in predicting whether a diamond is expensive.
+
+Color and Carat: These also have relatively high importance, indicating that they provide valuable information for classification.
+
+Depth, Table, and Cut: These features show lower importance, meaning they contribute less to the model's accuracy and classification decisions.
+
+Focus on High-Importance Features: Variables like clarity, average_size, and carat should be central to any decision-making strategy, as they significantly influence the model's predictions.
+
+Lower-Importance Features May Be Optional: Features like table, depth, and cut are less critical and could potentially be excluded to simplify the model, as they contribute less to accuracy and purity.
+
+
+# 6. Regression Models
+
+We continue training a SVM regression model using a sampled dataset of 10000 observations from the train_data. The response variable is `price_per_carat`. Comparing to the original variable `price`, this is more accurate. The predicted price can be easily calculated by multiplying `price_per_carat` and `carat`. After training, the model predicts on the test_data, and residuals (the difference between the predicted and actual prices) are calculated. The Mean Squared Error (MSE) is computed to evaluate the model's accuracy. Additionally, a scatter plot compares actual vs. predicted prices, with a red reference line representing perfect predictions. This visualization helps to assess how well the model's predictions align with the actual values.
 
 ```{r}
 set.seed(123)
@@ -224,38 +344,35 @@ The clustering of points around the red line shows that the model performs reaso
 The Mean Squared Error (MSE) value of 404796 measures the average squared difference between the predicted and actual prices. While this value is large, it corresponds to the high range of diamond prices (up to 20,000 in the dataset), meaning the error is relative to the price scale. The model is fairly accurate for lower and mid-range prices but shows more variability or error at the higher price range.
 
 
-# 6. Interpretations
-
-
-From the EDA, we gained insights into the distribution and relationships between variables. The correlation visualization in \href{#appendix-b4}{\textcolor{blue}{Appendix B4}} informed our feature selection process. For instance, the high covariance values (0.99) between variables `x`, `y`, and `z` suggest a degree of redundancy among them. Additionally, the strong correlation between `price` and `carat` may hinder the discovery of relationships between `price` and other features.
-
-The next step involved feature engineering and selection. We created new variables, such as `average_size` and `price_per_carat`, and derived a categorical response variable `expensive`, based on `price_per_carat`. In the updated pairwise plots, the covariance between `price_per_carat` and `carat` decreased to 0.79, compared to the original 0.93 covariance between `price` and `carat`. This reduction is encouraging, as it may allow us to better uncover the contributions of other features to the price. Furthermore, the `expensive` variable is well-balanced, with an equal distribution of TRUE and FALSE values.
-
-Using the categorical response `expensive`, we applied classification models to predict whether a diamond is expensive. Logistic regression achieved 94% accuracy, while SVM reached 95% accuracy. Grid search was used to optimize the hyperparameters for the SVM model. The logistic regression model revealed that `table` and `depth` were less important in predicting whether a diamond is expensive, as indicated by their higher p-values (0.03 and 0.18, respectively). The SVM model, with its higher accuracy, suggests that this approach might be promising for price prediction as well.
-
-When we turned to the numerical response `price_per_carat`, we trained regression models using SVM to predict unit price. The clustering of points around the perfect prediction line indicates that the model performs well for many cases. However, there are some deviations, particularly for higher-priced diamonds, where prediction becomes more challenging. We also attempted to use `price` as the response variable in an SVM regression model, but this resulted in a higher mean squared error (MSE). This observation supports our choice of `price_per_carat` as a more effective target for the diamond price prediction task.
-
-
 # 7. Recommendations & Conclusions
 
-For the data owner, the findings from the analysis provide valuable insights into predicting diamond prices based on the available features. The classification model achieves a high accuracy of at least 95% in determining whether a diamond is classified as expensive, while the SVM regression model performs well for lower and mid-range prices but shows more variability at higher price levels. We recommend focusing future research on improving price prediction for expensive diamonds, as this segment shows the largest prediction error. Techniques such as Principal Component Analysis (PCA) could be explored to reduce dimensionality and improve model accuracy.
+For the data owner, this analysis provides valuable insights into predicting diamond prices based on key features. Our classification model achieves a high accuracy of at least 95% in identifying whether a diamond can be classified as expensive, supporting the effectiveness of these features in price categorization. To further improve price prediction, we recommend focusing on advanced regression models and exploring dimensionality reduction techniques such as Principal Component Analysis (PCA) to refine feature selection.
 
-Our analysis reveals that key features—`carat`, `average_size`, `cut`, `color`, and `clarity`—significantly influence diamond pricing, while `depth` and `table` are less important. We recommend the data owner prioritize the impactful features when developing pricing strategies. The less critical features may be deprioritized, allowing for a more focused analysis on the features that matter most for accurate price prediction.
+Our findings highlight that `carat`, `average_size`, `color`, and `clarity` significantly influence diamond pricing, whereas `cut`, `depth`, and `table` are comparatively less impactful. We suggest that the data owner prioritize these influential features when developing pricing strategies and consider deprioritizing the less critical ones to streamline analyses and enhance focus on the most impactful predictors.
 
-Additionally, we suggest refining the definition of diamond size. The current measurements using x, y, and z dimensions may be inconsistent due to rotational variability, potentially affecting pricing accuracy. A more standardized size metric that considers diamond volume or surface area, along with weight (carat), may offer better representation. Incorporating factors such as shape and cut quality into the size definition could also enhance the model's ability to predict prices accurately.
+Additionally, we recommend refining the definition of diamond size. Using x, y, and z dimensions introduces variability due to rotation, which may affect pricing accuracy. A standardized metric—such as diamond volume or surface area in combination with carat weight—may provide a more consistent measure. Including factors like shape and cut quality in this metric could further enhance the model’s predictive accuracy.
 
-In conclusion, our analysis identifies the core factors that influence diamond prices and provides a predictive model for the data owner. Addressing the higher variability in predicting expensive diamond prices through advanced methods will further improve accuracy and benefit the data owner's pricing strategy.
+Furthermore, we propose the following strategies to enrich the analysis:
+
+1. **Geographical Market Data**: If available, incorporate market location information (e.g., region or market where the diamond is sold). This data could help capture regional pricing fluctuations and improve prediction accuracy.
+
+2. **Temporal Analysis**: Adding time-related variables (such as the month or year of sale) could account for seasonal trends and market changes, making the model more adaptable to temporal variations.
+
+3. **Price Elasticity**: Evaluate price elasticity by introducing data on comparable products or alternatives. Understanding the impact of changes in attributes (e.g., cut or clarity) on price sensitivity can help in constructing a more realistic and responsive pricing model.
+
+In conclusion, our analysis identifies the core features that drive diamond pricing and provides a predictive framework for the data owner. By addressing variability in predicting prices for high-end diamonds and implementing these recommendations, the data owner can further improve pricing strategies and maximize predictive accuracy.
 
 Our answer to the assignment questions:
 
 ### 1. **What tools and techniques were used and why?**
-   In our analysis, we used R for data processing, visualization, and model building due to its rich libraries. EDA was performed to understand the distribution and relationships between variables, using techniques like correlation matrices and pairwise plots to identify patterns and redundancies. For instance, the strong covariance between `x`, `y`, and `z` indicated potential multicollinearity, while high correlation between `price` and `carat` guided us to focus on alternative variables. Feature engineering involved creating new variables such as `average_size` and `price_per_carat` to reduce multicollinearity and better capture the underlying relationships in the data. Classification and regression techniques were then applied, including logistic regression and Support Vector Machines (SVM), selected for their performance and interpretability in binary classification and continuous prediction tasks.
+   In our analysis, we used R for data processing, visualization, and model building due to its rich libraries. EDA was performed to understand the distribution and relationships between variables, using techniques like correlation matrices and pairwise plots to identify patterns and redundancies. For instance, the strong covariance between `x`, `y`, and `z` indicated potential multicollinearity, while high correlation between `price` and `carat` guided us to focus on alternative variables. Feature engineering involved creating new variables such as `average_size` and `price_per_carat` to reduce multicollinearity and better capture the underlying relationships in the data. Classification techniques were then applied, including logistic regression and SVM, deciosion tree and random forest, selected for their performance and interpretability in the binary classification.
 
 ### 2. **What were the results of the techniques? What were the new insights?**
-   The EDA revealed key insights about the relationships between variables, such as the redundancy among dimensions `x`, `y`, and `z` and the dominance of `carat` in relation to `price`. By engineering features like `price_per_carat`, we reduced the covariance between `carat` and the new target variable to 0.79, compared to 0.93 with `price`, which allowed us to explore other features' contributions to diamond pricing. In terms of classification, both logistic regression and SVM models performed well, achieving 94% and 95% accuracy, respectively. The SVM model’s superior accuracy suggests its potential for improving price predictions. The SVM regression models also performed reasonably well, particularly when predicting `price_per_carat`, though higher-priced diamonds proved more difficult to predict accurately.
+   The EDA revealed key insights about the relationships between variables, such as the redundancy among dimensions `x`, `y`, and `z` and the dominance of `carat` in relation to `price`. By engineering features like `price_per_carat`, we reduced the covariance between `carat` and the new target variable to 0.79, compared to 0.93 with `price`, which allowed us to explore other features' contributions to diamond pricing. In terms of classification, both SVM and random forest models performed well, achieving 95.32% and 95.48% accuracy, respectively. The random Forest Model also provides insights into feature importance: Variables like clarity, average_size, and carat should be central to any decision-making strategy, as they significantly influence the model's predictions. Lower-Importance Features May Be Optional: Features like table, depth, and cut are less critical and could potentially be excluded to simplify the model, as they contribute less to accuracy and purity.
+
 
 ### 3. **How did this help answer your questions? If your questions changed, why?**
-   Our initial question was how to improve the prediction of diamond prices, and the analysis helped clarify that focusing on `price_per_carat` rather than `price` yielded better insights and predictions. The discovery that `price_per_carat` had less covariance with other features enabled us to better model relationships within the dataset, particularly through feature engineering. Additionally, the well-balanced `expensive` categorical variable allowed us to apply classification models effectively. The success of SVM and logistic regression models in classification, combined with the observed regression performance, confirmed that feature engineering improved our predictive power. As a result, our approach shifted towards optimizing the performance of models on `price_per_carat`, rather than continuing to work with `price` directly.
+   Our initial question was how to improve the prediction of diamond prices, and the analysis helped clarify that focusing on `price_per_carat` rather than `price` yielded better insights and predictions. The discovery that `price_per_carat` had less covariance with other features enabled us to better model relationships within the dataset, particularly through feature engineering. Additionally, the well-balanced `expensive` categorical variable allowed us to apply classification models effectively. The success of SVM and random forest models in classification confirmed that feature engineering improved our predictive power. As a result, our approach shifted towards optimizing the performance of models on the categorical variable `expensive` derived from `price_per_carat`, rather than continuing to work with `price` directly.
 
 
 # Appendix A: Dataset Information {#appendix-a}
