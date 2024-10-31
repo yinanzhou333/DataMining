@@ -37,6 +37,21 @@ Initial Support Vector Machine Accuracy: 91%
 
 Support Vector Machine Accuracy After Hyperparameter Tuning: 95%
 
+Single Decision Tree Accuracy: 90%
+
+Random Forest: 95%
+
+![image](https://github.com/user-attachments/assets/43127091-0ec0-4950-b14c-f018e75c8608)
+
+![image](https://github.com/user-attachments/assets/324bdbc9-a7e4-4641-82ab-065c8c2b37bf)
+
+The random forest has the highest accuracy (95.48%), suggesting it is the most effective model for this classification task. It’s robust and captures complex patterns, making it suitable for production use. 
+
+Random forests reduce the risk of overfitting by averaging across multiple trees, and they capture non-linear relationships better than logistic regression and individual decision trees. 
+
+They also provide insights into feature importance.
+
+
 # Regression: predict the price
 
 Support Vector Machine MSE: 404796.3
